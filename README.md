@@ -35,16 +35,18 @@ src/
 ├── models/          # Tipagens das entidades e Contratos de Dados (DTOs)
 ├── repositories/    # Camada exclusiva de comunicação SQL com o Banco de Dados
 ├── routes/          # Definição e mapeamento dos endpoints da API
+├── scripts/         # Scripts utilitários executados manualmente (ex: criação do admin)
 ├── services/        # Centralização das Regras de Negócio e validações críticas
 ├── utils/           # Funções utilitárias reaproveitáveis (Mapeamentos, Criptografia)
+├── validations/      # Schemas Zod de validação de payloads (auth, user, etc.)
 ```
 
 **Divisão de Responsabilidades:**
 
 - **Routes**: Mapeia as URLs e aciona os middlewares de validação antes de expor os recursos.
 - **Controllers**: Isolam a camada HTTP. Apenas extraem dados da requisição (params, body, query) e disparam a resposta.
-- **Middlewares**: Filtros globais. O `validate.middleware` valida payloads com Zod, enquanto o `errorHandler` impede crashes inesperados capturando erros conhecidos (`AppError`) e genéricos.
-- **Services**: Onde o sistema "pensa". Verifica duplicidade de e-mails, comanda a criptografia de senhas através do `bcryptjs` e valida fluxos antes de persistir dados.
+- **Middlewares**: Filtros globais. O `validate.middleware` valida payloads com Zod, o `authMiddleware` autentica via JWT, o `authorize` restringe rotas por papel (role), e o `errorHandler` impede crashes inesperados capturando erros conhecidos (`AppError`) e genéricos.
+- **Services**: Onde o sistema "pensa". Verifica duplicidade de e-mails, comanda a criptografia de senhas através do `bcryptjs`, gera e valida tokens JWT, e valida fluxos antes de persistir dados.
 - **Repositories**: Concentram as queries SQL diretas (SELECT, INSERT, UPDATE, DELETE) usando tipagens fortes do driver `mysql2` como `RowDataPacket` e `ResultSetHeader`.
 - **Utils**: Funções puras de apoio. O `toUserPublic` higieniza dados de entidades removendo informações sensíveis (como hashes de senhas) antes do envio ao cliente.
 
@@ -55,6 +57,95 @@ Entidades principais mapeadas no banco de dados: `users`, `categories`, `product
 - Um produto pertence obrigatoriamente a uma categoria (`category_id`).
 - Um pedido (`order`) pertence a um usuário e, opcionalmente, a um endereço de entrega.
 - Um pedido possui múltiplos itens (`order_items`), cujo preço unitário é congelado no ato da compra para histórico financeiro íntegro.
+- Cada usuário possui um papel (`role`) do tipo `ENUM('ADMIN', 'CUSTOMER')`, que define seu nível de acesso ao sistema.
+
+## 🔐 Autenticação e Autorização (JWT)
+
+A API utiliza **JSON Web Tokens (JWT)** para autenticação stateless e middlewares de autorização baseados em papéis (`role`).
+
+### Fluxo de login
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "email": "usuario@exemplo.com",
+  "password": "suasenha"
+}
+```
+
+Resposta (200):
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": {
+    "id": 1,
+    "name": "Nome do Usuário",
+    "email": "usuario@exemplo.com",
+    "role": "CUSTOMER"
+  }
+}
+```
+
+O `token` retornado deve ser enviado no cabeçalho `Authorization` das requisições às rotas protegidas:
+
+```http
+Authorization: Bearer <token>
+```
+
+### Middlewares de proteção
+
+- **`authMiddleware`**: valida o token JWT enviado no cabeçalho e injeta `req.user` (`id`, `role`) na requisição. Sem token válido, retorna `401 Unauthorized`.
+- **`authorize(["ADMIN"])`**: restringe o acesso a rotas com base no papel do usuário autenticado. Sem o papel exigido, retorna `403 Forbidden`.
+
+Exemplo de uso combinado em uma rota restrita a administradores:
+
+```ts
+router.post(
+  "/categories",
+  authMiddleware,
+  authorize(["ADMIN"]),
+  CategoryController.create,
+);
+```
+
+### Papéis (Roles)
+
+| Role | Permissões |
+|---|---|
+| `CUSTOMER` | Papel padrão de qualquer usuário cadastrado pela rota pública. Acesso aos próprios dados e fluxo de compra. |
+| `ADMIN` | Acesso total ao sistema: criação/edição de categorias, produtos, e gestão geral. |
+
+> 🔒 **Importante**: a rota pública de cadastro (`POST /api/users`) nunca aceita o campo `role` vindo do cliente — o schema Zod de criação ignora esse campo, e todo novo usuário nasce como `CUSTOMER`. Não existe forma de se autopromover a `ADMIN` pela API pública.
+
+### Criando o usuário administrador
+
+Como o papel `ADMIN` nunca pode ser concedido por uma rota pública, o primeiro administrador do sistema é criado por um **script manual**, executado fora do fluxo HTTP:
+
+1. Defina as credenciais do administrador no `.env` (nunca commitado no Git):
+
+```env
+ADMIN_NAME=Administrador
+ADMIN_EMAIL=admin@orbital.com
+ADMIN_PASSWORD=uma_senha_forte_aqui
+```
+
+2. Execute o script:
+
+```bash
+npx ts-node src/scripts/seedAdmin.ts
+```
+
+3. Saída esperada:
+
+```
+Servidor conectado ao banco de dados!
+Admin criado com sucesso: admin@orbital.com
+```
+
+O script reutiliza o `UserServices.create`, garantindo hash de senha e checagem de e-mail duplicado, mas passa `role: "ADMIN"` diretamente — algo que a rota pública de cadastro nunca permite.
 
 ## 📦 Como Executar
 
@@ -111,9 +202,16 @@ DB_USER=root
 DB_PASSWORD=root
 DB_NAME=orbital_eletronicos
 JWT_SECRET=sua_chave_secreta_super_segura
+
+# Credenciais usadas apenas pelo script seedAdmin.ts
+ADMIN_NAME=Administrador
+ADMIN_EMAIL=admin@orbital.com
+ADMIN_PASSWORD=uma_senha_forte_aqui
 ```
 
 > ⚠️ **Atenção**: Se você estiver rodando a aplicação sem Docker, mude a propriedade `DB_HOST=mysql` para `DB_HOST=localhost` e certifique-se de que a porta configurada no seu arquivo de conexão local aponte para onde seu banco físico está respondendo (ex: `3307`).
+
+> ⚠️ **Segurança**: o arquivo `.env` nunca deve ser commitado (já está protegido pelo `.gitignore`). Caso o repositório seja compartilhado, gere um `JWT_SECRET` forte (`openssl rand -hex 32`) e nunca reutilize as credenciais de exemplo acima em produção.
 
 ## 🌿 Fluxo de Branches
 
@@ -151,7 +249,7 @@ git push -u origin feature/nome-da-sua-feature
 
 Este repositório segue estritamente a especificação de [Conventional Commits](https://www.conventionalcommits.org/). Seus commits devem iniciar com um dos prefixos abaixo:
 
-- `feat`: Introdução de uma nova funcionalidade (ex: `feat(user): add user registration route`)
+- `feat`: Introdução de uma nova funcionalidade (ex: `feat(auth): add JWT login and role-based authorization`)
 - `fix`: Correção de um bug (ex: `fix(auth): fix token expiration crash`)
 - `docs`: Alterações exclusivamente na documentação (ex: `docs: update readme architecture overview`)
 - `style`: Mudanças que não afetam o significado do código (espaços, formatação, ponto e vírgula ausente)
