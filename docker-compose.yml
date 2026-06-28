@@ -32,7 +32,7 @@ services:
       DB_USER: root
       DB_PASSWORD: root
       DB_NAME: orbital_eletronicos
-      JWT_SECRET: sua_chave_secreta
+      JWT_SECRET: admin_orbital_0307
     depends_on:
       mysql:
         condition: service_healthy
