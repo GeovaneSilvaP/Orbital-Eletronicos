@@ -1,5 +1,9 @@
 import { UserServices } from "../services/UserServices";
 import { NextFunction, Request, Response } from "express";
+import {
+  createUserSchema,
+  updateUserSchema,
+} from "../validations/user.validation";
 
 /**
  * Intercepta as requisições HTTP e gerencia as respostas da API para o recurso de Usuários.
@@ -39,7 +43,10 @@ export class UserControllers {
    */
   static async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const user = await UserServices.create(req.body);
+      // Valida e filtra o body — "role" nunca existe nesse schema,
+      // então mesmo que venha no JSON, é descartado aqui.
+      const data = createUserSchema.parse(req.body);
+      const user = await UserServices.create(data);
       return res
         .status(201)
         .json({ message: "Usuário criado com sucesso!", user });
@@ -54,7 +61,8 @@ export class UserControllers {
   static async update(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);
-      const user = await UserServices.update(id, req.body);
+      const data = updateUserSchema.parse(req.body);
+      const user = await UserServices.update(id, data);
       return res
         .status(200)
         .json({ message: "Dados do usuário atualizado com sucesso!", user });
