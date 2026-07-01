@@ -8,4 +8,4 @@ export interface Category {
 }
 
 export type CreateCategoryDTO = Omit<Category,"id" | "created_at" | "updated_at">;
-export type UpdateCategoryDTO = Omit<Category,"id" | "created_at" | "updated_at">;
+export type UpdateCategoryDTO =Partial< Omit<Category,"id" | "created_at" | "updated_at">>;
