@@ -29,10 +29,14 @@ services:
       - "3000:3000"
     environment:
       DB_HOST: mysql
+      DB_PORT: 3306
       DB_USER: root
       DB_PASSWORD: root
       DB_NAME: orbital_eletronicos
       JWT_SECRET: admin_orbital_0307
+      ADMIN_NAME: Administrador
+      ADMIN_EMAIL: admin@orbital.com
+      ADMIN_PASSWORD: admin123
     depends_on:
       mysql:
         condition: service_healthy
