@@ -17,6 +17,7 @@ app.use(cors());
 app.use("/api", UserRoutes);
 app.use("/api/auth", AuthRoutes);
 app.use("/api/categories", CategoryRoutes);
+
 // Registra centralizadamente o tratamento global de erros (DEVE ser sempre o último a ser declarado)
 app.use(errorHandler);
 

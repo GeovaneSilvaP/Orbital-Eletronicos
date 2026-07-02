@@ -5,7 +5,13 @@ import {
   updateCategorySchema,
 } from "../validations/category.validation";
 
+/**
+ * Orquestra os fluxos de entrada e saída HTTP das Categorias.
+ */
 export class CategoryControllers {
+  /**
+   * Lista todas as categorias. Aberto ao público.
+   */
   static async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const categories = await CategoryServices.getAll();
@@ -15,6 +21,9 @@ export class CategoryControllers {
     }
   }
 
+  /**
+   * Obtém detalhes de uma única categoria filtrando pelo ID.
+   */
   static async getById(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);
@@ -25,6 +34,9 @@ export class CategoryControllers {
     }
   }
 
+  /**
+   * Dispara a validação e criação de categoria. Restrito a administradores.
+   */
   static async create(req: Request, res: Response, next: NextFunction) {
     try {
       const data = createCategorySchema.parse(req.body);
@@ -37,6 +49,9 @@ export class CategoryControllers {
     }
   }
 
+  /**
+   * Modifica as propriedades de uma categoria de acordo com o ID. Restrito a administradores.
+   */
   static async update(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);
@@ -50,6 +65,9 @@ export class CategoryControllers {
     }
   }
 
+  /**
+   * Deleta do banco a categoria selecionada. Restrito a administradores.
+   */
   static async delete(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);
