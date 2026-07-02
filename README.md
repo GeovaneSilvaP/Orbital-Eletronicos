@@ -38,7 +38,7 @@ src/
 ├── scripts/         # Scripts utilitários executados manualmente (ex: criação do admin)
 ├── services/        # Centralização das Regras de Negócio e validações críticas
 ├── utils/           # Funções utilitárias reaproveitáveis (Mapeamentos, Criptografia)
-├── validations/      # Schemas Zod de validação de payloads (auth, user, etc.)
+├── validations/     # Schemas Zod de validação de payloads (auth, user, etc.)
 ```
 
 **Divisão de Responsabilidades:**
@@ -50,6 +50,21 @@ src/
 - **Repositories**: Concentram as queries SQL diretas (SELECT, INSERT, UPDATE, DELETE) usando tipagens fortes do driver `mysql2` como `RowDataPacket` e `ResultSetHeader`.
 - **Utils**: Funções puras de apoio. O `toUserPublic` higieniza dados de entidades removendo informações sensíveis (como hashes de senhas) antes do envio ao cliente.
 
+---
+
+## 📊 Status do Desenvolvimento
+
+| Módulo | Status | Descrição |
+|---|---|---|
+| `users` | ✅ Concluído | CRUD completo com hash de senha e resposta pública sem password |
+| `auth` | ✅ Concluído | Login com JWT, `authMiddleware` e `authorize` por role |
+| `categories` | ✅ Concluído | CRUD completo com validação Zod e proteção por role ADMIN |
+| `products` | 🔄 Próximo | CRUD com FK para `category_id` e controle de estoque |
+| `addresses` | ⏳ Pendente | Vinculado ao `req.user.id` via JWT |
+| `orders` + `order_items` | ⏳ Pendente | Transação ACID, baixa de estoque e congelamento de preço |
+
+---
+
 ## 🗂️ Modelo de Dados
 
 Entidades principais mapeadas no banco de dados: `users`, `categories`, `products`, `addresses`, `orders`, `order_items`.
@@ -58,6 +73,8 @@ Entidades principais mapeadas no banco de dados: `users`, `categories`, `product
 - Um pedido (`order`) pertence a um usuário e, opcionalmente, a um endereço de entrega.
 - Um pedido possui múltiplos itens (`order_items`), cujo preço unitário é congelado no ato da compra para histórico financeiro íntegro.
 - Cada usuário possui um papel (`role`) do tipo `ENUM('ADMIN', 'CUSTOMER')`, que define seu nível de acesso ao sistema.
+
+---
 
 ## 🔐 Autenticação e Autorização (JWT)
 
@@ -122,9 +139,11 @@ router.post(
 
 ### Criando o usuário administrador
 
-Como o papel `ADMIN` nunca pode ser concedido por uma rota pública, o primeiro administrador do sistema é criado por um **script manual**, executado fora do fluxo HTTP:
+Como o papel `ADMIN` nunca pode ser concedido por uma rota pública, o primeiro administrador do sistema é criado por um **script manual**, executado fora do fluxo HTTP.
 
-1. Defina as credenciais do administrador no `.env` (nunca commitado no Git):
+#### Rodando localmente (sem Docker)
+
+1. Defina as credenciais do administrador no `.env`:
 
 ```env
 ADMIN_NAME=Administrador
@@ -138,6 +157,24 @@ ADMIN_PASSWORD=uma_senha_forte_aqui
 npx ts-node src/scripts/seedAdmin.ts
 ```
 
+#### Rodando via Docker (ambiente conteinerizado)
+
+1. Certifique-se de que as variáveis estão definidas na seção `environment` do serviço `backend` no `docker-compose.yml`:
+
+```yaml
+backend:
+  environment:
+    ADMIN_NAME: Administrador
+    ADMIN_EMAIL: admin@orbital.com
+    ADMIN_PASSWORD: uma_senha_forte_aqui
+```
+
+2. Com os containers já em execução, rode:
+
+```bash
+docker exec -it orbital_backend npm run seed:admin
+```
+
 3. Saída esperada:
 
 ```
@@ -146,6 +183,8 @@ Admin criado com sucesso: admin@orbital.com
 ```
 
 O script reutiliza o `UserServices.create`, garantindo hash de senha e checagem de e-mail duplicado, mas passa `role: "ADMIN"` diretamente — algo que a rota pública de cadastro nunca permite.
+
+---
 
 ## 📦 Como Executar
 
@@ -158,7 +197,7 @@ O script reutiliza o `UserServices.create`, garantindo hash de senha e checagem 
 Na raiz do projeto, execute o comando abaixo para construir e subir o ambiente completo:
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 Isso vai inicializar a seguinte malha de serviços:
@@ -171,9 +210,20 @@ Isso vai inicializar a seguinte malha de serviços:
 > 💡 **Nota sobre a porta do MySQL**: A porta exposta no host é a `3307` (mapeada para a interna `3306` do container) precisamente para evitar conflitos de porta caso você já possua um MySQL rodando localmente na sua máquina.
 
 **Comandos úteis do Docker:**
-- Rodar em segundo plano (background): `docker-compose up -d`
-- Parar os containers: `docker-compose down`
-- Derrubar os containers apagando os volumes de dados do banco: `docker-compose down -v`
+
+```bash
+# Rodar em segundo plano
+docker compose up -d
+
+# Parar os containers
+docker compose down
+
+# Derrubar os containers apagando os volumes de dados do banco
+docker compose down -v
+
+# Executar o script de seed do admin
+docker exec -it orbital_backend npm run seed:admin
+```
 
 ### 🟡 Rodando Localmente (Sem Docker)
 
@@ -191,6 +241,8 @@ npm install
 npm run dev
 ```
 
+---
+
 ## ⚙️ Variáveis de Ambiente
 
 Crie um arquivo `.env` dentro da pasta `backend/` seguindo a estrutura abaixo:
@@ -201,17 +253,19 @@ DB_HOST=mysql
 DB_USER=root
 DB_PASSWORD=root
 DB_NAME=orbital_eletronicos
-JWT_SECRET=sua_chave_secreta_super_segura
+JWT_SECRET=admin_orbital_0307
 
 # Credenciais usadas apenas pelo script seedAdmin.ts
 ADMIN_NAME=Administrador
 ADMIN_EMAIL=admin@orbital.com
-ADMIN_PASSWORD=uma_senha_forte_aqui
+ADMIN_PASSWORD=admin123
 ```
 
 > ⚠️ **Atenção**: Se você estiver rodando a aplicação sem Docker, mude a propriedade `DB_HOST=mysql` para `DB_HOST=localhost` e certifique-se de que a porta configurada no seu arquivo de conexão local aponte para onde seu banco físico está respondendo (ex: `3307`).
 
 > ⚠️ **Segurança**: o arquivo `.env` nunca deve ser commitado (já está protegido pelo `.gitignore`). Caso o repositório seja compartilhado, gere um `JWT_SECRET` forte (`openssl rand -hex 32`) e nunca reutilize as credenciais de exemplo acima em produção.
+
+---
 
 ## 🌿 Fluxo de Branches
 
@@ -245,6 +299,8 @@ git push -u origin feature/nome-da-sua-feature
 
 4. Abra um Pull Request (PR) da sua `feature/*` para a `develop`. Após a aprovação e testes, a `develop` será mesclada à `main` periodicamente.
 
+---
+
 ## 🏷️ Convenção de Commits
 
 Este repositório segue estritamente a especificação de [Conventional Commits](https://www.conventionalcommits.org/). Seus commits devem iniciar com um dos prefixos abaixo:
@@ -256,6 +312,8 @@ Este repositório segue estritamente a especificação de [Conventional Commits]
 - `refactor`: Alterações de código que não corrigem bugs nem adicionam funcionalidades (melhoria de legibilidade)
 - `test`: Adição ou correção de testes existentes
 - `chore`: Atualizações de tarefas de build, pacotes npm, configurações de ferramentas, etc
+
+---
 
 ## 👨‍💻 Autor
 
