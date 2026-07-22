@@ -46,18 +46,21 @@ CREATE TABLE
 
 -- ADDRESSES
 CREATE TABLE
-  addresses (
+  IF NOT EXISTS addresses (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     street VARCHAR(150) NOT NULL,
     number VARCHAR(20) NOT NULL,
-    complement VARCHAR(100),
+    complement VARCHAR(100) NULL,
     neighborhood VARCHAR(100) NOT NULL,
     city VARCHAR(100) NOT NULL,
-    state VARCHAR(2) NOT NULL,
-    zip_code VARCHAR(10) NOT NULL,
+    state CHAR(2) NOT NULL,
+    zip_code VARCHAR(9) NOT NULL,
+    is_default BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_addresses_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    INDEX idx_addresses_user_id (user_id)
   );
 
 -- ORDERS
