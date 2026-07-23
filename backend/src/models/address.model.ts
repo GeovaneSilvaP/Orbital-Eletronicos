@@ -1,3 +1,6 @@
+/**
+ * Representa a estrutura exata (snake_case) da tabela 'addresses' no banco de dados MySQL.
+ */
 export interface AddressRow {
   id: number;
   user_id: number;
@@ -13,6 +16,9 @@ export interface AddressRow {
   updated_at: Date;
 }
 
+/**
+ * Interface limpa utilizada pela aplicação TypeScript (padrão camelCase).
+ */
 export interface Address {
   id: number;
   userId: number;
@@ -28,6 +34,10 @@ export interface Address {
   updatedAt: Date;
 }
 
+/**
+ * Mapeia o retorno bruto do banco MySQL (AddressRow) para o modelo padrão da aplicação (Address).
+ * Trata conversões de nomenclatura (snake_case -> camelCase) e garante o tipo booleano.
+ */
 export function mapAddressRowToAddress(row: AddressRow): Address {
   return {
     id: row.id,
