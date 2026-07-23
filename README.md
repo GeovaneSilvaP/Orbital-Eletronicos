@@ -19,6 +19,7 @@ Loja virtual de eletrônicos desenvolvida com arquitetura em camadas, utilizando
 - **Tailwind CSS** (Estilização utilitária)
 - **React Router DOM** (Gerenciamento de rotas)
 - **Axios** (Cliente HTTP)
+- **ViaCEP** (Preenchimento automático de endereço a partir do CEP)
 
 ---
 
@@ -38,7 +39,7 @@ src/
 ├── scripts/         # Scripts utilitários executados manualmente (ex: criação do admin)
 ├── services/        # Centralização das Regras de Negócio e validações críticas
 ├── utils/           # Funções utilitárias reaproveitáveis (Mapeamentos, Criptografia)
-├── validations/     # Schemas Zod de validação de payloads (auth, user, etc.)
+├── validations/     # Schemas Zod de validação de payloads (auth, user, product, address, etc.)
 ```
 
 **Divisão de Responsabilidades:**
@@ -46,8 +47,8 @@ src/
 - **Routes**: Mapeia as URLs e aciona os middlewares de validação antes de expor os recursos.
 - **Controllers**: Isolam a camada HTTP. Apenas extraem dados da requisição (params, body, query) e disparam a resposta.
 - **Middlewares**: Filtros globais. O `validate.middleware` valida payloads com Zod, o `authMiddleware` autentica via JWT, o `authorize` restringe rotas por papel (role), e o `errorHandler` impede crashes inesperados capturando erros conhecidos (`AppError`) e genéricos.
-- **Services**: Onde o sistema "pensa". Verifica duplicidade de e-mails, comanda a criptografia de senhas através do `bcryptjs`, gera e valida tokens JWT, e valida fluxos antes de persistir dados.
-- **Repositories**: Concentram as queries SQL diretas (SELECT, INSERT, UPDATE, DELETE) usando tipagens fortes do driver `mysql2` como `RowDataPacket` e `ResultSetHeader`.
+- **Services**: Onde o sistema "pensa". Verifica duplicidade de e-mails e SKUs, valida existência de categoria antes de vincular um produto, garante que apenas um endereço por usuário seja marcado como padrão, comanda a criptografia de senhas através do `bcryptjs`, gera e valida tokens JWT.
+- **Repositories**: Concentram as queries SQL diretas (SELECT, INSERT, UPDATE, DELETE) usando tipagens fortes do driver `mysql2` como `RowDataPacket` e `ResultSetHeader`. Operações com efeitos colaterais em múltiplas linhas (como a troca de endereço padrão) são executadas dentro de transações para garantir atomicidade.
 - **Utils**: Funções puras de apoio. O `toUserPublic` higieniza dados de entidades removendo informações sensíveis (como hashes de senhas) antes do envio ao cliente.
 
 ---
@@ -59,9 +60,9 @@ src/
 | `users` | ✅ Concluído | CRUD completo com hash de senha e resposta pública sem password |
 | `auth` | ✅ Concluído | Login com JWT, `authMiddleware` e `authorize` por role |
 | `categories` | ✅ Concluído | CRUD completo com validação Zod e proteção por role ADMIN |
-| `products` | 🔄 Próximo | CRUD com FK para `category_id` e controle de estoque |
-| `addresses` | ⏳ Pendente | Vinculado ao `req.user.id` via JWT |
-| `orders` + `order_items` | ⏳ Pendente | Transação ACID, baixa de estoque e congelamento de preço |
+| `products` | ✅ Concluído | CRUD com FK para `category_id`, SKU único e controle de estoque |
+| `addresses` | ✅ Concluído | Vinculado ao `req.user.id` via JWT, com regra de endereço padrão único |
+| `orders` + `order_items` | 🔄 Próximo | Transação ACID, baixa de estoque e congelamento de preço |
 
 ---
 
@@ -69,7 +70,10 @@ src/
 
 Entidades principais mapeadas no banco de dados: `users`, `categories`, `products`, `addresses`, `orders`, `order_items`.
 
-- Um produto pertence obrigatoriamente a uma categoria (`category_id`).
+- Um produto pertence obrigatoriamente a uma categoria (`category_id`), com `ON DELETE RESTRICT` — não é possível excluir uma categoria que ainda possua produtos vinculados.
+- Cada produto possui um `sku` único, usado como código de controle de estoque.
+- Um endereço pertence a um único usuário (`user_id`), com `ON DELETE CASCADE` — ao excluir um usuário, seus endereços são removidos automaticamente.
+- Um usuário pode ter múltiplos endereços, mas apenas um marcado como padrão (`is_default`) por vez; a troca do padrão é feita dentro de uma transação no Repository.
 - Um pedido (`order`) pertence a um usuário e, opcionalmente, a um endereço de entrega.
 - Um pedido possui múltiplos itens (`order_items`), cujo preço unitário é congelado no ato da compra para histórico financeiro íntegro.
 - Cada usuário possui um papel (`role`) do tipo `ENUM('ADMIN', 'CUSTOMER')`, que define seu nível de acesso ao sistema.
@@ -186,6 +190,54 @@ O script reutiliza o `UserServices.create`, garantindo hash de senha e checagem 
 
 ---
 
+## 📦 Produtos (Products)
+
+CRUD completo de produtos, vinculado obrigatoriamente a uma categoria existente. Rotas de leitura são públicas; criação, atualização e remoção exigem `ADMIN`.
+
+| Método | Rota | Acesso | Descrição |
+|---|---|---|---|
+| `GET` | `/api/products` | Público | Lista produtos, com filtros opcionais `?categoryId=` e `?isActive=` |
+| `GET` | `/api/products/:id` | Público | Busca um produto específico |
+| `POST` | `/api/products` | ADMIN | Cria um novo produto |
+| `PUT` | `/api/products/:id` | ADMIN | Atualiza campos de um produto (parcial) |
+| `DELETE` | `/api/products/:id` | ADMIN | Remove um produto |
+
+**Regras de negócio aplicadas no Service:**
+- O `categoryId` informado é validado contra a tabela `categories` antes da criação/atualização — categoria inexistente retorna `400`.
+- O `sku` é validado como único no sistema — SKU duplicado retorna `409`.
+- O campo `price`, armazenado como `DECIMAL` no MySQL, é convertido para `number` na camada de mapeamento (Repository → Model), evitando bugs de tipo no restante da aplicação.
+
+---
+
+## 📍 Endereços (Addresses)
+
+CRUD de endereços de entrega, vinculado ao usuário autenticado via JWT (`req.user.id`). Todas as rotas exigem token — não existe endereço público ou compartilhado entre usuários.
+
+| Método | Rota | Acesso | Descrição |
+|---|---|---|---|
+| `GET` | `/api/addresses` | Usuário autenticado | Lista os endereços do próprio usuário |
+| `GET` | `/api/addresses/:id` | Usuário autenticado (dono) | Busca um endereço específico |
+| `POST` | `/api/addresses` | Usuário autenticado | Cria um novo endereço |
+| `PUT` | `/api/addresses/:id` | Usuário autenticado (dono) | Atualiza campos de um endereço (parcial) |
+| `DELETE` | `/api/addresses/:id` | Usuário autenticado (dono) | Remove um endereço |
+
+**Regras de negócio aplicadas no Service/Repository:**
+- **Posse do recurso**: qualquer tentativa de acessar/editar/excluir um endereço que não pertence ao usuário do token retorna `404` (não `403`), evitando que a API confirme a existência de endereços de terceiros.
+- **Endereço padrão único**: ao criar ou atualizar um endereço com `isDefault: true`, o Repository executa uma transação que desmarca automaticamente qualquer outro endereço do mesmo usuário previamente marcado como padrão — nunca existe mais de um `is_default = true` por usuário.
+- Ao excluir o usuário, seus endereços são removidos em cascata pela constraint `ON DELETE CASCADE`.
+
+**Preenchimento automático via CEP:** no front-end, o formulário de endereço consulta a [ViaCEP](https://viacep.com.br/) assim que o usuário digita um CEP válido (8 dígitos), preenchendo automaticamente rua, bairro, cidade e UF antes do envio ao back-end.
+
+---
+
+## 🌐 Consumo de APIs Externas
+
+| Serviço | Uso | Autenticação |
+|---|---|---|
+| [ViaCEP](https://viacep.com.br/) | Preenchimento automático de endereço a partir do CEP no formulário de cadastro/edição de endereços | Não requer chave (gratuita) |
+
+---
+
 ## 📦 Como Executar
 
 ### Pré-requisitos
@@ -275,7 +327,7 @@ O projeto adota uma estratégia simplificada de Git Flow para garantir a integri
 |---|---|
 | `main` | Código perfeitamente estável e homologado, pronto para produção. |
 | `develop` | Branch de integração contínua do desenvolvimento. |
-| `feature/*` | Ramificações para construção de funcionalidades isoladas (Ex: `feature/user-management`). |
+| `feature/*` | Ramificações para construção de funcionalidades isoladas (Ex: `feature/feat-address`, `feature/feat-category`). |
 
 **Fluxo de Trabalho Diário:**
 
