@@ -7,7 +7,13 @@ import {
 } from "../validations/products.validation";
 import { AppError } from "../errors/AppError";
 
+/**
+ * Camada de regras de negócio para gestão do catálogo de produtos.
+ */
 export class ProductService {
+  /**
+   * Lista todos os produtos aplicando filtros opcionais de busca.
+   */
   static async findAll(filters?: {
     categoryId?: number;
     isActive?: boolean;
@@ -15,6 +21,10 @@ export class ProductService {
     return ProductRepository.findAll(filters);
   }
 
+  /**
+   * Localiza um produto pelo ID.
+   * @throws AppError (404) caso o produto não exista.
+   */
   static async findById(id: number): Promise<Product> {
     const product = await ProductRepository.findById(id);
     if (!product) {
@@ -23,6 +33,10 @@ export class ProductService {
     return product;
   }
 
+  /**
+   * Processa a criação de um novo produto.
+   * Valida se a categoria informada existe e se o SKU é único no sistema.
+   */
   static async create(data: CreateProductInput): Promise<Product> {
     await this.ensureCategoryExists(data.categoryId);
     await this.ensureSkuIsUnique(data.sku);
@@ -30,8 +44,11 @@ export class ProductService {
     return ProductRepository.create(data);
   }
 
+  /**
+   * Processa a atualização de um produto existente.
+   */
   static async update(id: number, data: UpdateProductInput): Promise<Product> {
-    await this.findById(id); // garante que existe (lança 404 se não)
+    await this.findById(id); // Garante a existência do produto (dispara 404 se não achar)
 
     if (data.categoryId !== undefined) {
       await this.ensureCategoryExists(data.categoryId);
@@ -48,11 +65,18 @@ export class ProductService {
     return updated;
   }
 
+  /**
+   * Deleta um produto após validar sua existência no banco.
+   */
   static async delete(id: number): Promise<void> {
     await this.findById(id);
     await ProductRepository.delete(id);
   }
 
+  /**
+   * Validação auxiliar: Garante que a chave estrangeira da categoria aponta para um registro existente.
+   * @throws AppError (400) se a categoria não for encontrada.
+   */
   static async ensureCategoryExists(categoryId: number): Promise<void> {
     const category = await CategoryRepositories.findById(categoryId);
     if (!category) {
@@ -60,6 +84,11 @@ export class ProductService {
     }
   }
 
+  /**
+   * Validação auxiliar: Garante que não existam dois produtos com o mesmo SKU (identificador de estoque).
+   * @param ignoreId ID do produto atual no caso de edições (evita acusar conflito com ele mesmo).
+   * @throws AppError (409) em caso de duplicidade de SKU.
+   */
   static async ensureSkuIsUnique(
     sku: string,
     ignoreId?: number,
