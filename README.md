@@ -39,7 +39,7 @@ src/
 ├── scripts/         # Scripts utilitários executados manualmente (ex: criação do admin)
 ├── services/        # Centralização das Regras de Negócio e validações críticas
 ├── utils/           # Funções utilitárias reaproveitáveis (Mapeamentos, Criptografia)
-├── validations/     # Schemas Zod de validação de payloads (auth, user, product, address, etc.)
+├── validations/     # Schemas Zod de validação de payloads (auth, user, product, address, order, etc.)
 ```
 
 **Divisão de Responsabilidades:**
@@ -47,8 +47,8 @@ src/
 - **Routes**: Mapeia as URLs e aciona os middlewares de validação antes de expor os recursos.
 - **Controllers**: Isolam a camada HTTP. Apenas extraem dados da requisição (params, body, query) e disparam a resposta.
 - **Middlewares**: Filtros globais. O `validate.middleware` valida payloads com Zod, o `authMiddleware` autentica via JWT, o `authorize` restringe rotas por papel (role), e o `errorHandler` impede crashes inesperados capturando erros conhecidos (`AppError`) e genéricos.
-- **Services**: Onde o sistema "pensa". Verifica duplicidade de e-mails e SKUs, valida existência de categoria antes de vincular um produto, garante que apenas um endereço por usuário seja marcado como padrão, comanda a criptografia de senhas através do `bcryptjs`, gera e valida tokens JWT.
-- **Repositories**: Concentram as queries SQL diretas (SELECT, INSERT, UPDATE, DELETE) usando tipagens fortes do driver `mysql2` como `RowDataPacket` e `ResultSetHeader`. Operações com efeitos colaterais em múltiplas linhas (como a troca de endereço padrão) são executadas dentro de transações para garantir atomicidade.
+- **Services**: Onde o sistema "pensa". Verifica duplicidade de e-mails e SKUs, valida existência de categoria antes de vincular um produto, garante que apenas um endereço por usuário seja marcado como padrão, orquestra a criação de pedidos validando estoque e posse de endereço, aplica a máquina de estados de status de pedido, comanda a criptografia de senhas através do `bcryptjs`, gera e valida tokens JWT.
+- **Repositories**: Concentram as queries SQL diretas (SELECT, INSERT, UPDATE, DELETE) usando tipagens fortes do driver `mysql2` como `RowDataPacket` e `ResultSetHeader`. Operações com efeitos colaterais em múltiplas linhas (troca de endereço padrão, criação de pedido com baixa de estoque, cancelamento com devolução de estoque) são executadas dentro de transações para garantir atomicidade.
 - **Utils**: Funções puras de apoio. O `toUserPublic` higieniza dados de entidades removendo informações sensíveis (como hashes de senhas) antes do envio ao cliente.
 
 ---
@@ -62,7 +62,7 @@ src/
 | `categories` | ✅ Concluído | CRUD completo com validação Zod e proteção por role ADMIN |
 | `products` | ✅ Concluído | CRUD com FK para `category_id`, SKU único e controle de estoque |
 | `addresses` | ✅ Concluído | Vinculado ao `req.user.id` via JWT, com regra de endereço padrão único |
-| `orders` + `order_items` | 🔄 Próximo | Transação ACID, baixa de estoque e congelamento de preço |
+| `orders` + `order_items` | ✅ Concluído | Transação ACID, baixa/devolução de estoque e congelamento de preço |
 
 ---
 
@@ -74,8 +74,10 @@ Entidades principais mapeadas no banco de dados: `users`, `categories`, `product
 - Cada produto possui um `sku` único, usado como código de controle de estoque.
 - Um endereço pertence a um único usuário (`user_id`), com `ON DELETE CASCADE` — ao excluir um usuário, seus endereços são removidos automaticamente.
 - Um usuário pode ter múltiplos endereços, mas apenas um marcado como padrão (`is_default`) por vez; a troca do padrão é feita dentro de uma transação no Repository.
-- Um pedido (`order`) pertence a um usuário e, opcionalmente, a um endereço de entrega.
-- Um pedido possui múltiplos itens (`order_items`), cujo preço unitário é congelado no ato da compra para histórico financeiro íntegro.
+- Um pedido (`order`) pertence a um usuário, com `ON DELETE RESTRICT` — pedidos são registros financeiros e nunca são apagados junto com o usuário.
+- Um pedido pode opcionalmente referenciar um endereço de entrega (`address_id`), com `ON DELETE SET NULL` — o histórico do pedido é preservado mesmo que o endereço original seja excluído depois.
+- Um pedido possui múltiplos itens (`order_items`), cujo `product_name` e `unit_price` são **congelados (snapshot)** no ato da compra, preservando o histórico financeiro mesmo que o produto mude de nome ou preço no futuro.
+- A FK `order_items.product_id` usa `ON DELETE RESTRICT` — um produto não pode ser excluído se já possuir histórico de vendas.
 - Cada usuário possui um papel (`role`) do tipo `ENUM('ADMIN', 'CUSTOMER')`, que define seu nível de acesso ao sistema.
 
 ---
@@ -137,7 +139,7 @@ router.post(
 | Role | Permissões |
 |---|---|
 | `CUSTOMER` | Papel padrão de qualquer usuário cadastrado pela rota pública. Acesso aos próprios dados e fluxo de compra. |
-| `ADMIN` | Acesso total ao sistema: criação/edição de categorias, produtos, e gestão geral. |
+| `ADMIN` | Acesso total ao sistema: criação/edição de categorias, produtos, e gestão geral de pedidos. |
 
 > 🔒 **Importante**: a rota pública de cadastro (`POST /api/users`) nunca aceita o campo `role` vindo do cliente — o schema Zod de criação ignora esse campo, e todo novo usuário nasce como `CUSTOMER`. Não existe forma de se autopromover a `ADMIN` pela API pública.
 
@@ -227,6 +229,40 @@ CRUD de endereços de entrega, vinculado ao usuário autenticado via JWT (`req.u
 - Ao excluir o usuário, seus endereços são removidos em cascata pela constraint `ON DELETE CASCADE`.
 
 **Preenchimento automático via CEP:** no front-end, o formulário de endereço consulta a [ViaCEP](https://viacep.com.br/) assim que o usuário digita um CEP válido (8 dígitos), preenchendo automaticamente rua, bairro, cidade e UF antes do envio ao back-end.
+
+---
+
+## 🛒 Pedidos (Orders/OrderItems)
+
+Módulo mais crítico da aplicação: cria um pedido junto com seus itens e realiza a baixa de estoque dos produtos de forma **atômica**, usando transação real do MySQL. Também controla o ciclo de vida do pedido através de uma máquina de estados.
+
+| Método | Rota | Acesso | Descrição |
+|---|---|---|---|
+| `POST` | `/api/orders` | Usuário autenticado | Cria um pedido com um ou mais itens |
+| `GET` | `/api/orders/mine` | Usuário autenticado | Lista os pedidos do próprio usuário |
+| `GET` | `/api/orders/:id` | Usuário autenticado (dono) ou ADMIN | Busca um pedido específico |
+| `GET` | `/api/orders` | ADMIN | Lista todos os pedidos do sistema, com filtro opcional `?status=` |
+| `PATCH` | `/api/orders/:id/status` | Usuário autenticado (dono, só CANCELED) ou ADMIN (qualquer transição válida) | Atualiza o status do pedido |
+
+### Fluxo de status
+
+```
+PENDING → PAID → SHIPPED → DELIVERED
+   ↘        ↘
+  CANCELED  CANCELED
+```
+
+Transições fora dessa árvore (ex: pular de `PENDING` direto para `DELIVERED`) são rejeitadas com `400`.
+
+### Regras de negócio aplicadas no Service/Repository
+
+- **Congelamento de preço (snapshot)**: `product_name` e `unit_price` são copiados para `order_items` no momento da criação do pedido — alterações futuras no produto não afetam pedidos já realizados.
+- **Baixa de estoque na criação**: o estoque é decrementado assim que o pedido é criado (status `PENDING`), dentro da mesma transação que insere o pedido e seus itens. Se qualquer item falhar (produto inexistente, inativo ou sem estoque suficiente), toda a operação é revertida (`rollback`) — nenhum pedido parcial é criado.
+- **Proteção contra concorrência**: a baixa de estoque usa uma condição (`WHERE stock_quantity >= ?`) diretamente no `UPDATE`, garantindo que duas compras simultâneas do último item em estoque nunca deixem o saldo negativo.
+- **Devolução de estoque no cancelamento**: ao mudar o status para `CANCELED`, o estoque de todos os itens do pedido é devolvido automaticamente, também dentro de uma transação.
+- **Permissão por papel**: usuários comuns só podem cancelar (`CANCELED`) o próprio pedido; qualquer outra transição de status (`PAID`, `SHIPPED`, `DELIVERED`) exige `ADMIN` e retorna `403` se tentada por um `CUSTOMER`.
+- **Posse do recurso**: acessar um pedido de outro usuário (sem ser ADMIN) retorna `404`, seguindo o mesmo padrão de segurança do módulo de Addresses.
+- **Validação de endereço**: se um `addressId` for informado na criação do pedido, ele é validado como pertencente ao usuário autenticado antes da criação — endereço de outro usuário retorna `400`.
 
 ---
 
@@ -327,7 +363,7 @@ O projeto adota uma estratégia simplificada de Git Flow para garantir a integri
 |---|---|
 | `main` | Código perfeitamente estável e homologado, pronto para produção. |
 | `develop` | Branch de integração contínua do desenvolvimento. |
-| `feature/*` | Ramificações para construção de funcionalidades isoladas (Ex: `feature/feat-address`, `feature/feat-category`). |
+| `feature/*` | Ramificações para construção de funcionalidades isoladas (Ex: `feature/feat-address`, `feature/feat-products`, `feature/feat-orders`). |
 
 **Fluxo de Trabalho Diário:**
 
