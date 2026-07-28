@@ -4,6 +4,8 @@ import UserRoutes from "./routes/UserRoutes";
 import AuthRoutes from "./routes/auth.routes";
 import CategoryRoutes from "./routes/CategoryRoutes";
 import ProductRoutes from "./routes/ProductRoutes";
+import AddressRoutes from "./routes/AddressRoutes";
+import OrderRoutes from "./routes/OrderRoutes";
 import { errorHandler } from "./middlewares/errorHandler.middleware";
 
 const app = express();
@@ -19,6 +21,8 @@ app.use("/api", UserRoutes);
 app.use("/api/auth", AuthRoutes);
 app.use("/api/categories", CategoryRoutes);
 app.use("/api/products", ProductRoutes);
+app.use("/api/addresses", AddressRoutes);
+app.use("/api/orders", OrderRoutes);
 
 // Registra centralizadamente o tratamento global de erros (DEVE ser sempre o último a ser declarado)
 app.use(errorHandler);

@@ -65,10 +65,10 @@ CREATE TABLE
 
 -- ORDERS
 CREATE TABLE
-  orders (
+  IF NOT EXISTS orders (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
-    address_id INT,
+    address_id INT NULL,
     status ENUM (
       'PENDING',
       'PAID',
@@ -76,22 +76,28 @@ CREATE TABLE
       'DELIVERED',
       'CANCELED'
     ) NOT NULL DEFAULT 'PENDING',
-    total DECIMAL(10, 2) NOT NULL DEFAULT 0,
+    total_amount DECIMAL(10, 2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    FOREIGN KEY (address_id) REFERENCES addresses (id) ON DELETE SET NULL ON UPDATE CASCADE
+    CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_orders_address FOREIGN KEY (address_id) REFERENCES addresses (id) ON DELETE SET NULL ON UPDATE CASCADE,
+    INDEX idx_orders_user_id (user_id),
+    INDEX idx_orders_status (status)
   );
 
 -- ORDER_ITEMS
 CREATE TABLE
-  order_items (
+  IF NOT EXISTS order_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
     product_id INT NOT NULL,
-    quantity INT NOT NULL,
+    product_name VARCHAR(150) NOT NULL,
     unit_price DECIMAL(10, 2) NOT NULL,
+    quantity INT NOT NULL,
     subtotal DECIMAL(10, 2) NOT NULL,
-    FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE RESTRICT ON UPDATE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_order_items_order FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_order_items_product FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_order_items_order_id (order_id),
+    INDEX idx_order_items_product_id (product_id)
   );

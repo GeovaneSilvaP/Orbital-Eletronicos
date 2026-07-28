@@ -1,17 +1,34 @@
-import { Router } from 'express';
-import { CategoryControllers } from '../controllers/CategoryControllers';
-import { authMiddleware } from '../middlewares/auth.middleware';
-import { authorize } from '../middlewares/authorize.middleware';
+import { Router } from "express";
+import { ProductController } from "../controllers/ProductControllers"; // Ajustado para a importação do controller correto
+import { authMiddleware } from "../middlewares/auth.middleware";
+import { roleMiddleware } from "../middlewares/roleMiddleware";
 
 const router = Router();
 
-// Rotas públicas — qualquer visitante pode ver o catálogo
-router.get('/', CategoryControllers.getAll);
-router.get('/:id', CategoryControllers.getById);
+// Rotas públicas — Qualquer visitante pode visualizar os produtos da loja
+router.get("/", ProductController.getAll);
+router.get("/:id", ProductController.getById);
 
-// Rotas protegidas — apenas ADMIN gerencia o catálogo
-router.post('/', authMiddleware, authorize(['ADMIN']), CategoryControllers.create);
-router.put('/:id', authMiddleware, authorize(['ADMIN']), CategoryControllers.update);
-router.delete('/:id', authMiddleware, authorize(['ADMIN']), CategoryControllers.delete);
+// Rotas protegidas — Somente administradores autenticados podem gerenciar o estoque/catálogo
+router.post(
+  "/",
+  authMiddleware,
+  roleMiddleware(["ADMIN"]),
+  ProductController.create,
+);
+
+router.put(
+  "/:id",
+  authMiddleware,
+  roleMiddleware(["ADMIN"]),
+  ProductController.update,
+);
+
+router.delete(
+  "/:id",
+  authMiddleware,
+  roleMiddleware(["ADMIN"]),
+  ProductController.delete,
+);
 
 export default router;

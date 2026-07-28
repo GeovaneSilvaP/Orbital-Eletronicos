@@ -5,7 +5,13 @@ import {
   updateProductSchema,
 } from "../validations/products.validation";
 
+/**
+ * Camada Controller: Gerencia os fluxos de requisição e resposta das rotas de produtos.
+ */
 export class ProductController {
+  /**
+   * Lista os produtos permitindo query params para filtros (ex: `/products?categoryId=1&isActive=true`).
+   */
   static async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const filters: {
@@ -20,6 +26,7 @@ export class ProductController {
       if (req.query.isActive !== undefined) {
         filters.isActive = req.query.isActive === "true";
       }
+
       const products = await ProductService.findAll(filters);
       res
         .status(200)
@@ -29,6 +36,9 @@ export class ProductController {
     }
   }
 
+  /**
+   * Obtém detalhes de um produto através do parâmetro de rota `:id`.
+   */
   static async getById(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);
@@ -39,6 +49,9 @@ export class ProductController {
     }
   }
 
+  /**
+   * Valida o corpo da requisição usando Zod e solicita a criação do produto.
+   */
   static async create(req: Request, res: Response, next: NextFunction) {
     try {
       const data = createProductSchema.parse(req.body);
@@ -49,6 +62,9 @@ export class ProductController {
     }
   }
 
+  /**
+   * Atualiza as informações do produto de forma parcial.
+   */
   static async update(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);
@@ -62,6 +78,9 @@ export class ProductController {
     }
   }
 
+  /**
+   * Remove o produto do catálogo. Retorna status HTTP 204 (No Content).
+   */
   static async delete(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);
